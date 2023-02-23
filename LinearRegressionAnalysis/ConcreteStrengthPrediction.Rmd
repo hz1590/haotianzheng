@@ -1,6 +1,6 @@
 ---
 title: "Concrete Strength"
-author: "Haotian Zheng, Rongqi Zhang, Keith Lee"
+author: "Haotian Zheng"
 date: "2022-12-14"
 output:
   pdf_document: default
