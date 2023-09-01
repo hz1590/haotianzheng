@@ -1,0 +1,104 @@
+---
+title: "JPNSUICIDE"
+author: "Haotian Zheng"
+date: "2023-08-24"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+https://www.nature.com/articles/s41562-020-01042-z#code-availability
+
+```{r}
+library(stringr)
+library(zoo)
+library(haven)
+library(dplyr)
+library(ggplot2)
+setwd("~/Downloads/jpnsuicide/")
+
+d1 = read_dta("suicide201607.dta") %>% mutate(date = "2016-07")
+d2 = read_dta("suicide201608.dta") %>% mutate(date = "2016-08")
+
+d3 = read_dta("suicide201609.dta") %>% mutate(date = "2016-09")
+d4 = read_dta("suicide201610.dta") %>% mutate(date = "2016-10")
+d5 = read_dta("suicide201611.dta") %>% mutate(date = "2016-11")
+d6 = read_dta("suicide201612.dta") %>% mutate(date = "2016-12")
+d7 = read_dta("suicide201701.dta") %>% mutate(date = "2017-01")
+d8 = read_dta("suicide201702.dta") %>% mutate(date = "2017-02")
+d9 = read_dta("suicide201703.dta") %>% mutate(date = "2017-03")
+d10 = read_dta("suicide201704.dta") %>% mutate(date = "2017-04")
+d11= read_dta("suicide201705.dta") %>% mutate(date = "2017-05")
+d12 = read_dta("suicide201706.dta") %>% mutate(date = "2017-06")
+d13 = read_dta("suicide201707.dta") %>% mutate(date = "2017-07")
+d14 = read_dta("suicide201708.dta") %>% mutate(date = "2017-08")
+d15 = read_dta("suicide201709.dta") %>% mutate(date = "2017-09")
+d16 = read_dta("suicide201710.dta") %>% mutate(date = "2017-10")
+d17 = read_dta("suicide201711.dta") %>% mutate(date = "2017-11")
+d18 = read_dta("suicide201712.dta") %>% mutate(date = "2017-12")
+d19 = read_dta("suicide201801.dta") %>% mutate(date = "2018-01")
+d20 = read_dta("suicide201802.dta") %>% mutate(date = "2018-02")
+d21 = read_dta("suicide201803.dta") %>% mutate(date = "2018-03")
+d22 = read_dta("suicide201804.dta") %>% mutate(date = "2018-04")
+d23 = read_dta("suicide201805.dta") %>% mutate(date = "2018-05")
+d24 = read_dta("suicide201806.dta") %>% mutate(date = "2018-06")
+d25 = read_dta("suicide201807.dta") %>% mutate(date = "2018-07")
+d26 = read_dta("suicide201808.dta") %>% mutate(date = "2018-08")
+d27 = read_dta("suicide201809.dta") %>% mutate(date = "2018-09")
+d28 = read_dta("suicide201810.dta") %>% mutate(date = "2018-10")
+d29 = read_dta("suicide201811.dta") %>% mutate(date = "2018-11")
+d30 = read_dta("suicide201812.dta") %>% mutate(date = "2018-12")
+d31 = read_dta("suicide201901.dta") %>% mutate(date = "2019-01")
+d32 = read_dta("suicide201902.dta") %>% mutate(date = "2019-02")
+d33 = read_dta("suicide201903.dta") %>% mutate(date = "2019-03")
+d34 = read_dta("suicide201904.dta") %>% mutate(date = "2019-04")
+d35 = read_dta("suicide201905.dta") %>% mutate(date = "2019-05")
+d36 = read_dta("suicide201906.dta") %>% mutate(date = "2019-06")
+d37 = read_dta("suicide201907.dta") %>% mutate(date = "2019-07")
+d38 = read_dta("suicide201908.dta") %>% mutate(date = "2019-08")
+d39 = read_dta("suicide201909.dta") %>% mutate(date = "2019-09")
+d40 = read_dta("suicide201910.dta") %>% mutate(date = "2019-10")
+d41 = read_dta("suicide201911.dta") %>% mutate(date = "2019-11")
+d42 = read_dta("suicide201912.dta") %>% mutate(date = "2019-12")
+d43 = read_dta("suicide202001.dta") %>% mutate(date = "2020-01")
+d44 = read_dta("suicide202002.dta") %>% mutate(date = "2020-02")
+d45 = read_dta("suicide202003.dta") %>% mutate(date = "2020-03")
+d46 = read_dta("suicide202004.dta") %>% mutate(date = "2020-04")
+d47 = read_dta("suicide202005.dta") %>% mutate(date = "2020-05")
+d48 = read_dta("suicide202006.dta") %>% mutate(date = "2020-06")
+d49 = read_dta("suicide202007.dta") %>% mutate(date = "2020-07")
+d50 = read_dta("suicide202008.dta") %>% mutate(date = "2020-08")
+d51 = read_dta("suicide202009.dta") %>% mutate(date = "2020-09")
+d52 = read_dta("suicide202010.dta") %>% mutate(date = "2020-10")
+
+combined = rbind(d1,d2,d3,d4,d5,d6,d7,d8,d9,d10,d11,d12,d13,d14,d15,d16,d17,d18,d19,d20,d21,d22,d23,d24,d25,d26,d27,d28,d29,d30,d31,d32,d33,d34,d35,d36,d37,d38,d39,d40,d41,d42,d43,d45,d46,d47,d48,d49,d50,d51,d52) %>% filter(county_name != "") %>% group_by(year,month)%>% summarise(total = sum(suicide))
+
+
+strict = read.csv("owid-covid-data.csv") %>%
+  dplyr::filter(location =="Japan") %>% 
+  dplyr::select(stringency_index,location,date) %>% 
+  dplyr::mutate(dob_yy = lubridate::year(date), dob_mm = lubridate::month(date), 
+                day = lubridate::day(date)) %>% dplyr::select(-c(day,date)) %>% 
+  group_by(dob_yy,dob_mm) %>% dplyr::summarise_at(vars(stringency_index),list(mean = mean)) 
+for(i in 2:10){
+  strict$mean[i] = strict$mean[i] + strict$mean[i-1]
+}
+strict = strict[1:10,]
+colnames(strict)[1] = "year"
+colnames(strict)[2] = "month"
+combined = combined %>% left_join(strict, by =c("year","month") )
+
+combined[is.na(combined)] <- 0
+
+combined$covid =ifelse(combined$mean != 0,"Covid","Non-Covid")
+
+summary(lm(total ~ mean*covid,combined))
+
+
+combined$date = str_c(combined$year,'-',combined$month)
+combined$date=as.yearmon(combined$date)
+
+combined %>% ggplot(aes(x = date,y = total,color=as.factor(covid))) + geom_line()+guides(color = guide_legend(title = "Covid Time?")) + labs(y = '# of suicide')
+```
+
