@@ -1,0 +1,765 @@
+---
+title: "Machine Learning in Public Health Final Project"
+author: "Haotian Zheng"
+date: "2023-03-22"
+output:
+  pdf_document: default
+  html_document: default
+---
+
+```{r setup, set.seed(8),include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+# Preparation
+
+## Preparation 1:Loading the packages and data...
+
+
+```{r}
+# import package and data
+library(readxl)
+library(boot) #For cv.glm
+data = read_excel("~/Downloads/cardiodata.xlsx")
+library(tidyverse) # For Data Tidying
+library(leaps) # For model selection
+library(readxl) # For reading the data
+library(randomForest) # For randomForest 
+library(tree) # For creating trees related algorithms
+library(gbm) # Generalized Boosted Regression Modeling
+library(caret) # For knn
+library(MASS) # For LDA, QDA
+library(pROC)# For receiver operating characteristic curve
+```
+
+## Preparation 2:Tidying data to eliminate potential errors
+```{r}
+set.seed(1110)
+sum(is.na(data)) # Checking for NAs, no NAs found
+data$chd = as.factor(ifelse(data$chd =="1","YES","NO")) # Changing the name of recorded response
+data$famhist_Present = ifelse(data$famhist =="Present",1,0) # changing to 1 and 0 for famhist
+data = data %>% dplyr::select(-famhist,-ind) # Deleting famhist,ind
+```
+Presence of chd(coronary heart disease), from here on "chd", is our interested outcome.  The original value of this columns had a binary response of "1", being presence,"0", being absent.
+The response has been changed from "1" to "YES", "0" to "NO", for visuality reason. 
+And the class of this column has been changed from double to factor.  Famhist has been changed to "1", being presence,"0", being absent.
+
+Column "ind" has been deleted since it was patients' id and meaningless to our analysis.  
+
+## Preparation 3:Creating possible testing/training sets needed...
+
+```{r}
+set.seed(1110)
+train = data[(sample(nrow(data),round(nrow(data)*0.8))),] # Nearly 80% of training set
+test = data[-sample(nrow(data),round(nrow(data)*0.8)),] # Nearly 20% of testing set
+tr_ind = (sample(nrow(data),round(nrow(data)*0.8))) # index for training data
+n_all = nrow(train) 
+fold_ind <- sample(1:5, n_all, replace = TRUE) # index for the separation of 5 folds in cross-validation part
+```
+
+## Descriptive Statistics
+
+```{r}
+set.seed(1110)
+dim(data) # Data consists of 462 rows (observations) and 9 columns (8 predictors with 1 outcome).
+dim(train) # Training data consists of 231 rows (observations) and 9 columns (8 predictors with 1 outcome).
+dim(test) # Testing data consists of 231 rows (observations) and 9 columns (8 predictors with 1 outcome)
+dim(train) == dim(test) # We see 2 trues, meaning training set and testing set have same row numbers and columns numbers...They are divided equaly.
+
+summary(data) # Descriptive statistics
+```
+
+
+
+
+# First Step: Variable selection/Model selection
+
+## BIC Selection
+
+
+```{r}
+# BIC selection (smallest BIC using all subsets of the variables)
+set.seed(1110) 
+fit_BIC <- regsubsets(chd ~ ., data = train, nvmax = ncol(data)-1) #go through all subsets using backward method
+summary_BIC <- summary(fit_BIC) # save summary of BIC results
+min_BIC <- which.min(summary_BIC$bic) #find the minimum BIC
+coef_BIC = coef(fit_BIC,min_BIC) #get the chosen predictors based on BIC
+```
+
+
+## Forward Stepwise Selection with Adjusted R squared
+
+
+```{r}
+# Forward Stepwise Selection with Adjusted R squared (largest R squared)
+set.seed(1110)
+fit_FORWARD <- regsubsets(chd ~ ., data = train, method = "forward", nvmax = ncol(data)-1) #go through all subsets using forward method
+summary_FORWARD <- summary(fit_FORWARD) # save summary of adjusted R^2 results
+max_FORWARD <- which.max(summary_FORWARD$adjr2) #find the largest adjusted R^2
+coef_FORWARD = coef(fit_FORWARD, max_FORWARD) #get the chosen predictors based on adjusted R^2
+```
+
+
+## Backward Stepwise Selection with Cp
+
+```{r}
+# Backward Stepwise Selection with Cp ()
+set.seed(1110)
+fit_BACKWARD <- regsubsets(chd ~ ., data = train, method = "backward", nvmax = ncol(data)-1)#go through all subsets using backward method with cp()
+summary_BACKWARD <- summary(fit_BACKWARD) # save summary of cp results
+mix_BACKWARD <- which.min(summary_BACKWARD$cp)#find the minimum of cp
+coef_BACKWARD = coef(fit_BACKWARD, mix_BACKWARD)#get the chosen predictors based on Cp
+```
+
+-----------------------------------------------
+
+## Ridge Regression with 10-fold CV
+```{r}
+set.seed(1110)
+library(glmnet)
+x_tr <- as.matrix(train[, -9]) #get matrix for training set of predictors for ridge 
+y_tr <- train[, 9, drop = T] #get matrix for training set of responses for ridge 
+x_te <- as.matrix(test[, -9]) #get matrix for testing set of predictors for ridge 
+y_te <- test[, 9, drop = T] #get matrix for testing set of responses for ridge 
+
+cv_fit_ridge <- cv.glmnet(x_tr, y_tr, alpha = 0,family = "binomial") # ridge regression
+te_predd <- predict(cv_fit_ridge, newx = x_te, type = "class") #prediction on testing data
+error_Ridge <- mean((te_predd != y_te)) #see the error
+coef_ridge = coef(cv_fit_ridge) # find which predictors are preserved
+```
+
+
+## Lasso with 10-fold CV
+
+
+```{r}
+set.seed(1110)
+cv_fit_la <- cv.glmnet(x_tr, y_tr,family = "binomial") # lasso regression
+te_pred <- predict(cv_fit_la, newx = x_te,alpha = 1,type = "class")#prediction on testing data
+error_Lasso <- mean((te_pred != y_te)) #see the error
+coef_LASSO = coef(cv_fit_la) # find which predictors are preserved
+
+```
+
+```{r}
+# show some results
+coef_BIC
+coef_FORWARD
+coef_BACKWARD
+coef_ridge
+coef_LASSO 
+words = c("chd ~ tobacco + age + famhist_Present",
+          "chd ~ tobacco + age + obesity + typea + sbp + ldl + famhist_Present",
+          "chd ~ tobacco + age + obesity + typea + sbp + ldl + famhist_Present",
+          "chd ~ tobacco + age + obesity + typea + sbp + ldl + alcohol + adiposity + famhist_Present",
+          "chd ~ tobacco + age + sbp + ldl + famhist_Present") # set formulas for the method comparison
+fom1 = chd ~ tobacco + age + famhist_Present                                                     # BIC
+fom2 = chd ~ tobacco + age + obesity + typea + sbp + ldl + famhist_Present                       # Forward
+fom3 = chd ~ tobacco + age + obesity + typea + sbp + ldl + famhist_Present                       # Backward
+fom4 = chd ~ tobacco + age + obesity + typea + sbp + ldl + alcohol + adiposity + famhist_Present # Ridge
+fom5 = chd ~ tobacco + age + sbp + ldl + famhist_Present                                         # Lasso
+```
+
+
+
+
+# Step 2 Fitting Variables by multiple methods..
+
+
+
+## Logistic Regression
+
+### Cross Validation with K=5 Fold
+```{r}
+#logistic regression
+set.seed(1110)
+K <- 5 # set cross-validation folds
+matrix = matrix(nrow =1,ncol = 5) # null matrix to save results
+  # 1:ncol(train[fold_ind!=1,]) because when fold_ind !=1, nrows highest
+matrix[1,1]=mean(sapply(1:5,function(j){m = glm(fom1,data = train[fold_ind!=j,],family = "binomial") #formula 1
+                       p = ifelse(round(predict(m,train[fold_ind==j,],type= "respo")) == 1,"YES","NO") 
+                       # prediction on the cv testing set 
+                       conf =  table(p, train[fold_ind==j,]$chd)
+                       sensitivity(conf) #calculate the sensitivity of fom1 by glm
+                       }))
+matrix[1,2]=mean(sapply(1:5,function(j){m = glm(fom2,data = train[fold_ind!=j,],family = "binomial") #formula 2
+                       p = ifelse(round(predict(m,train[fold_ind==j,],type= "respo")) == 1,"YES","NO")
+                       # prediction on the cv testing set 
+                       conf =  table(p, train[fold_ind==j,]$chd)
+                       sensitivity(conf)  #calculate the sensitivity of fom2 by glm
+                       }))
+
+matrix[1,3]=mean(sapply(1:5,function(j){m = glm(fom3,data = train[fold_ind!=j,],family = "binomial") #formula 3
+                       p = ifelse(round(predict(m,train[fold_ind==j,],type= "respo")) == 1,"YES","NO")
+                       # prediction on the cv testing set 
+                       conf =  table(p, train[fold_ind==j,]$chd)
+                       sensitivity(conf) #calculate the sensitivity of fom3 by glm
+                       }))
+matrix[1,4]=mean(sapply(1:5,function(j){m = glm(fom4,data = train[fold_ind!=j,],family = "binomial") #formula 4
+                       p = ifelse(round(predict(m,train[fold_ind==j,],type= "respo")) == 1,"YES","NO")
+                       # prediction on the cv testing set 
+                       conf =  table(p, train[fold_ind==j,]$chd)
+                       sensitivity(conf) #calculate the sensitivity of fom4 by glm
+                       }))
+matrix[1,5]=mean(sapply(1:5,function(j){m = glm(fom5,data = train[fold_ind!=j,],family = "binomial") #formula 5
+                       p = ifelse(round(predict(m,train[fold_ind==j,],type= "respo")) == 1,"YES","NO")
+                       # prediction on the cv testing set 
+                       conf =  table(p, train[fold_ind==j,]$chd)
+                       sensitivity(conf) #calculate the sensitivity of fom5 by glm
+                       }))
+
+which.max(matrix[1,])# get the maximum sensitivity among 5 formulas
+
+# formula 5 is most sensitive
+```
+
+
+
+## K-Nearest Neightbor
+
+
+### Cross Validation For 5 fold --- sensitivity
+```{r warning=FALSE}
+# KNN model
+set.seed(1110)
+
+# Choosing K
+
+matrix = matrix(nrow = round(nrow(train)),ncol = 5) # matrix for save results
+
+for(i in 1:nrow(train[fold_ind!=1,])) { set.seed(1110)   # 1:ncol(train[fold_ind!=1,]) because when fold_ind !=1, nrows highest
+  matrix[i,1]=mean(sapply(1:5,function(j){set.seed(1110) 
+                       m = knn3(fom1,data = train[fold_ind!=j,],k=i) # formula1 
+                       p = predict(m,train[fold_ind==j,],type= "class")
+                       #prediction on the cv testing set
+                       conf =  table(p, train[fold_ind==j,]$chd)
+                       sensitivity(conf) #calculate the sensitivity of fom1 by knn
+                       }))
+
+}
+
+for(i in 1:nrow(train[fold_ind!=1,])) { set.seed(1110)  # 1:ncol(train[fold_ind!=1,]) because when fold_ind !=1, nrows highest
+matrix[i,2]=mean(sapply(1:5,function(j){set.seed(1110)
+  m = knn3(fom2,data = train[fold_ind!=j,],k=i) # formula 2
+                       p = predict(m,train[fold_ind==j,],type= "class")
+                       #prediction on the cv testing set
+                       conf =  table(p, train[fold_ind==j,]$chd)
+                       sensitivity(conf)#calculate the sensitivity of fom2 by knn
+                       })) 
+
+}
+
+for(i in 1:nrow(train[fold_ind!=1,])) {set.seed(1110)   # 1:ncol(train[fold_ind!=1,]) because when fold_ind !=1, nrows highest
+matrix[i,3]=mean(sapply(1:5,function(j){set.seed(1110)
+  m = knn3(fom3,data = train[fold_ind!=j,],k=i) # formula 3
+                       p = predict(m,train[fold_ind==j,],type= "class")
+                       #prediction on the cv testing set
+                       conf =  table(p, train[fold_ind==j,]$chd)
+                       sensitivity(conf) #calculate the sensitivity of fom3 by knn
+                       }))
+
+}
+
+for(i in 1:nrow(train[fold_ind!=1,])) {set.seed(1110)   # 1:ncol(train[fold_ind!=1,]) because when fold_ind !=1, nrows highest
+matrix[i,4]=mean(sapply(1:5,function(j){set.seed(1110)
+  m = knn3(fom4,data = train[fold_ind!=j,],k=i) # formula 4
+                       p = predict(m,train[fold_ind==j,],type= "class")
+                       #prediction on the cv testing set
+                       conf =  table(p, train[fold_ind==j,]$chd)
+                       sensitivity(conf) #calculate the sensitivity of fom4 by knn
+                       }))
+
+}
+
+for(i in 1:nrow(train[fold_ind!=1,])) {set.seed(1110)   # 1:ncol(train[fold_ind!=1,]) because when fold_ind !=1, nrows highest
+matrix[i,5]=mean(sapply(1:5,function(j){set.seed(1110)
+  m = knn3(fom5,data = train[fold_ind!=j,],k=i) # formula 5
+                       p = predict(m,train[fold_ind==j,],type= "class")
+                       #prediction on the cv testing set
+                       conf =  table(p, train[fold_ind==j,]$chd)
+                       sensitivity(conf) #calculate the sensitivity of fom4 by knn
+                       }))
+
+}
+max(matrix[,1],na.rm = TRUE) # get the maximum of sensitivity in iteration based on formula 1
+max(matrix[,2],na.rm = TRUE) # get the maximum of sensitivity in iteration based on formula 2
+max(matrix[,3],na.rm = TRUE) # get the maximum of sensitivity in iteration based on formula 3
+max(matrix[,4],na.rm = TRUE) # get the maximum of sensitivity in iteration based on formula 4
+max(matrix[,5],na.rm = TRUE) # get the maximum of sensitivity in iteration based on formula 5
+
+which.max(matrix[,1]) # mark best k for formula 1 with highest sensitivity
+which.max(matrix[,2]) # mark best k for formula 2 with highest sensitivity
+which.max(matrix[,3]) # mark best k for formula 3 with highest sensitivity
+which.max(matrix[,4]) # mark best k for formula 4 with highest sensitivity
+which.max(matrix[,5]) # mark best k for formula 5 with highest sensitivity
+
+# data visualization for KNN results
+library(ggplot2)
+K_sensitivity <- data.frame(matrix) # save the results of each K
+colnames(K_sensitivity) <- c('fom1', 'fom2', 'fom3', 'fom4', 'fom5') # create column for each formula
+K <- c(1:370) 
+K_sensitivity <- dplyr::mutate(K_sensitivity, K)
+K_sensitivity <- K_sensitivity  %>% 
+  dplyr::select(-fom3) %>% na.omit() # final selection for K
+K_sensitivity2<- pivot_longer(K_sensitivity, cols = c('fom1', 'fom2',  'fom4', 'fom5'), names_to = 'formula', values_to = 'sensitivity') # pivot the dataset into longer form for comparison 
+ggplot(data = K_sensitivity2, mapping = aes(x = K, y = sensitivity, color = formula)) + geom_line() # plot
+```
+Since there was overfit shown, we will do some extra work here to calculate specificity for choosing hyper parameter
+### Cross Validation For 5 fold --- specificity
+```{r warning=FALSE}
+# Applying second evaluation index specificity in KNN
+set.seed(1110) # Setting Seed
+
+# Choosing K
+
+matrix = matrix(nrow = 1,ncol = 5) # Setting a empty matrix to save the result
+
+  # 1:ncol(train[fold_ind!=1,]) because when fold_ind !=1, nrows highest
+matrix[1,1]=mean(sapply(1:5,function(j){set.seed(1110) # CV for j = 1
+  m = knn3(fom1,data = train[fold_ind!=j,],k=146)
+                       p = predict(m,train[fold_ind==j,],type= "class")
+                       conf =  table(p, train[fold_ind==j,]$chd)
+                       specificity(conf)
+                       })
+                 )
+ # 1:ncol(train[fold_ind!=1,]) because when fold_ind !=1, nrows highest
+matrix[1,2]=mean(sapply(1:5,function(j){set.seed(1110) # CV for j = 2
+  m = knn3(fom2,data = train[fold_ind!=j,],k=109)
+                       p = predict(m,train[fold_ind==j,],type= "class")
+                       conf =  table(p, train[fold_ind==j,]$chd)
+                       specificity(conf)}))
+
+  # 1:ncol(train[fold_ind!=1,]) because when fold_ind !=1, nrows highest
+matrix[1,3]=mean(sapply(1:5,function(j){set.seed(1110)# CV for j = 3
+  m = knn3(fom3,data = train[fold_ind!=j,],k=109)
+                       p = predict(m,train[fold_ind==j,],type= "class")
+                       conf =  table(p, train[fold_ind==j,]$chd)
+                       specificity(conf)}))
+
+  # 1:ncol(train[fold_ind!=1,]) because when fold_ind !=1, nrows highest
+matrix[1,4]=mean(sapply(1:5,function(j){set.seed(1110)# CV for j = 4
+  m = knn3(fom4,data = train[fold_ind!=j,],k=109)
+                       p = predict(m,train[fold_ind==j,],type= "class")
+                       conf =  table(p, train[fold_ind==j,]$chd)
+                       specificity(conf)}))
+
+matrix[1,5]=mean(sapply(1:5,function(j){set.seed(1110)
+  m = knn3(fom5,data = train[fold_ind!=j,],k=110)# CV for j = 5
+                       p = predict(m,train[fold_ind==j,],type= "class")
+                       conf =  table(p, train[fold_ind==j,]$chd)
+                       specificity(conf)}))
+
+max(matrix[,1],na.rm = TRUE) # highest sensitivity value
+max(matrix[,2],na.rm = TRUE)
+max(matrix[,3],na.rm = TRUE)
+max(matrix[,4],na.rm = TRUE)
+max(matrix[,5],na.rm = TRUE)
+which.max(matrix[,1]) # K for highest sensitivity value
+which.max(matrix[,2])
+which.max(matrix[,3])
+which.max(matrix[,4])
+which.max(matrix[,5])
+
+## Formula 5 with K=110
+K_specificity <- data.frame(matrix)
+barplot(names.arg =c('fom1(k=146)','fom2(k=109)', 'fom4(k=109)','fom5(k=110)'), c(0.02727273, 0.00952381,0.01952381,0.07480519), xlab = "models", ylab = "specificity")
+```
+
+
+
+## LDA
+
+
+
+### Cross Validation with K=5 Fold
+```{r}
+# LDA model
+set.seed(1110)
+t = function(formula){set.seed(1110) #function for cv
+
+
+mean(
+  sapply(1:5, 
+         function(j){set.seed(1110)
+fit = lda(formula,data = train[fold_ind !=j,])
+    pred_label <- predict(fit, newdata = train[fold_ind == j, ], type = "class")
+    conf =  table(pred_label$class, train[fold_ind==j,]$chd)
+    sensitivity(conf)
+  
+  }
+  )
+  )
+}
+t(fom1) # highest sensitivity value for fom1
+t(fom2)
+t(fom3)
+t(fom4)
+t(fom5)
+
+# 5 is best
+fit_lda = lda(fom4,data = train)
+
+```
+
+
+
+
+## QDA
+
+### Cross Validation with K=5 Fold
+```{r}
+# QDA model
+set.seed(1110)
+tt = function(formula){set.seed(1110) # function for cv
+
+
+mean(# mean
+  sapply(1:5, # sapply to apply 1:5 into function
+         function(j){set.seed(1110)
+fit = qda(formula,data = train[fold_ind !=j,])
+  pred_label <- predict(fit, newdata = train[fold_ind == j, ], type = "res")$class
+  conf =  table(pred_label, train[fold_ind==j,]$chd)
+    sensitivity(conf)
+  }
+  )
+)}
+
+# Calculating sentitivity
+tt(fom1) # highest sensitivity value
+tt(fom2)
+tt(fom3)
+tt(fom4)
+tt(fom5)
+
+# 1 has Highest Sensitivity
+
+```
+
+
+
+
+
+## Tree
+
+```{r warning=FALSE}
+#decision tree model 
+set.seed(1110)
+# Choosing best tree size with cross validation and size for all possible n tree #
+matrix = matrix(nrow = round(nrow(train)),ncol = 5) # creatin empty matrix to save results
+
+for(i in 2:nrow(train[fold_ind!=1,])) { set.seed(1110)  # 1:ncol(train[fold_ind!=1,]) because when fold_ind !=1, nrows highest
+matrix[i,1]=mean(sapply(1:5,function(j){set.seed(1110)# cv for j = 1
+                       m1 = tree(fom1,data = train[fold_ind!=j,])
+                       m = prune.tree(m1,best = i)
+                       p = predict(m,train[fold_ind==j,],type= "class")
+                       conf =  table(p, train[fold_ind==j,]$chd)
+                       sensitivity(conf)
+                       }))
+
+}
+
+for(i in 2:nrow(train[fold_ind!=1,])) { set.seed(1110)  # 1:ncol(train[fold_ind!=1,]) because when fold_ind !=1, nrows highest
+matrix[i,2]=mean(sapply(1:5,function(j){set.seed(1110)# cv for j = 2
+                       m1 = tree(fom2,data = train[fold_ind!=j,])
+                       m = prune.tree(m1,best = i)
+                       p = predict(m,train[fold_ind==j,],type= "class")
+                       conf =  table(p, train[fold_ind==j,]$chd)
+                       sensitivity(conf)
+                       }))
+
+}
+
+for(i in 2:nrow(train[fold_ind!=1,])) { set.seed(1110)  # 1:ncol(train[fold_ind!=1,]) because when fold_ind !=1, nrows highest
+matrix[i,3]=mean(sapply(1:5,function(j){set.seed(1110)# cv for j = 3
+                       m1 = tree(fom3,data = train[fold_ind!=j,])
+                       m = prune.tree(m1,best = i)
+                       p = predict(m,train[fold_ind==j,],type= "class")
+                       conf =  table(p, train[fold_ind==j,]$chd)
+                       sensitivity(conf)
+                       }))
+
+}
+
+for(i in 2:nrow(train[fold_ind!=1,])) { set.seed(1110)  # 1:ncol(train[fold_ind!=1,]) because when fold_ind !=1, nrows highest
+matrix[i,4]=mean(sapply(1:5,function(j){set.seed(1110)# cv for j = 4
+                       m1 = tree(fom4,data = train[fold_ind!=j,])
+                       m = prune.tree(m1,best = i)
+                       p = predict(m,train[fold_ind==j,],type= "class")
+                       conf =  table(p, train[fold_ind==j,]$chd)
+                       sensitivity(conf)
+                       }))
+
+}
+
+for(i in 2:nrow(train[fold_ind!=1,])) { set.seed(1110)  # 1:ncol(train[fold_ind!=1,]) because when fold_ind !=1, nrows highest
+matrix[i,5]=mean(sapply(1:5,function(j){set.seed(1110)# cv for j = 5
+                       m1 = tree(fom5,data = train[fold_ind!=j,])
+                       m = prune.tree(m1,best = i)
+                       p = predict(m,train[fold_ind==j,],type= "class")
+                       conf =  table(p, train[fold_ind==j,]$chd)
+                       sensitivity(conf)
+                       }))
+
+}
+# Looking for which is max
+max(matrix[,1],na.rm = TRUE) # Max for columne 1
+max(matrix[,2],na.rm = TRUE)
+max(matrix[,3],na.rm = TRUE)
+max(matrix[,4],na.rm = TRUE)
+max(matrix[,5],na.rm = TRUE)
+which.max(matrix[,1])
+tree_sensitivity <- data.frame(matrix) # saving tree's sensitivity
+colnames(tree_sensitivity) <- c('fom1', 'fom2', 'fom3', 'fom4', 'fom5')
+node <- c(1:370)
+
+
+# Creating for result graph
+tree_sensitivity <- dplyr::mutate(tree_sensitivity, node)
+tree_sensitivity <- tree_sensitivity  %>% 
+  dplyr::select(-fom3) %>% na.omit()
+tree_sensitivity2<- pivot_longer(tree_sensitivity, cols = c('fom1', 'fom2',  'fom4', 'fom5'), names_to = 'formula', values_to = 'values')
+ggplot(data = tree_sensitivity2, mapping = aes(x = node, y = values, color = formula)) + geom_line() # ploting the result
+# Formula 1 with 5 nodes is the best
+```
+
+
+
+
+### Random Forest
+
+```{r}
+#random forest
+set.seed(1110)
+
+# CV for random foresr
+rf = function(formula){set.seed(1110)
+  mean(
+  sapply(1:5, 
+         function(j){set.seed(1110)
+  rf.vasc = randomForest(formula,data = train[fold_ind != j,], importance = TRUE)
+  pred_prob<- predict(rf.vasc, newdata = train[fold_ind == j, ], type = 'response')
+  conf =  table(pred_prob, train[fold_ind==j,]$chd)
+                       sensitivity(conf)
+  }
+  )
+  )}
+
+# Sentitivity for randomforest
+rf(fom1)
+rf(fom2)
+rf(fom3)
+rf(fom4)
+rf(fom5)
+# 1 is highest
+rf <- randomForest(fom1,data = train, importance = TRUE)
+```
+
+### Boosting
+```{r}
+# boosting method 
+set.seed(1110)
+data$chd = ifelse(data$chd=="YES",1,0) # Changing it for convinience
+train$chd = ifelse(train$chd=="YES",1,0)# Changing it for convinience
+test$chd = ifelse(test$chd=="YES",1,0)# Changing it for convinience
+bos = function(formula){set.seed(1110) # gbm, cv includede within the function
+boost.vasc <- gbm(formula,data = train, distribution = "bernoulli", n.trees = 5000, interaction.depth = 1, cv.folds = 5, shrinkage = 0.01)
+best_n_tress <- which.min(boost.vasc$cv.error)
+summary(boost.vasc)
+yprob.boost <- predict(boost.vasc, newdata = train, n.trees = best_n_tress, type = "response")
+conf =  table(round(yprob.boost), train$chd)
+                       sensitivity(conf)
+}
+# Calculating  sensitivity
+br1=bos(fom1)
+br2=bos(fom2)
+br3=bos(fom3)
+br4=bos(fom4)
+br5=bos(fom5)
+
+br1 
+br2
+br3
+br4 # highest
+br5
+
+
+# Formula 4 is the best
+```
+## Final Validation, fitting the model into testing dataset
+```{r}
+# results of highest sensitivity selection within model
+logistic_se <- c(0.860163,0.8645387,0.8565387,0.873896)
+knn_se <- c(1,1,1,1)
+LDA_se <-c(0.8600814,0.8600892,0.8520892,0.8621207)
+QDA_se <-c(0.8548058,0.8319051,0.8319152,0.8469157)
+tree_se <-c(0.8608083,0.8575251,0.8575251,0.8575251)
+rf_se <- c(0.9038869,0.8533959,0.8414883,0.8485785)
+boost_se <- c(0.912,0.92,0.928,0.908)
+name_se <- c('fom1','fom2','fom4','fom5')
+
+# sensitivity visualization 
+plotting <- data.frame(name_se,logistic_se,knn_se,LDA_se,QDA_se,tree_se,rf_se,boost_se)
+plotting2 <- pivot_longer(plotting, cols = c('logistic_se','knn_se','LDA_se','QDA_se','tree_se','rf_se','boost_se'), names_to = 'formula', values_to = 'sensitivity')
+ggplot(data=plotting2, mapping=aes(x = formula, y = sensitivity,fill = name_se)) +
+  geom_bar(stat="identity", position=position_dodge(0.75))+
+  xlab('model')+ ylab('sensitivity')+ 
+  ggtitle('sensitivity selection')  + coord_cartesian(ylim = c(0.8,1))
+```
+
+```{r message=FALSE}
+# Final results for each model 
+# Logistic Regression
+fit_logi<- glm(fom5, data = train, family = "binomial") 
+pred <- ifelse(round(predict(fit_logi, newdata =test,type = "response")) == 1,1,0)
+pred_logic = pred
+auc(roc(test$chd, pred))
+# KNN
+train$chd = ifelse(train$chd == 1,"YES","NO")
+test$chd = ifelse(test$chd == 1,"YES","NO")
+train$chd = as.factor(train$chd)
+test$chd = as.factor(test$chd)
+fit_knn = knn3(fom5, data = train, k=110)
+pred_label <- predict(fit_knn, newdata = test, type = "prob")[,2]
+auc(roc(test$chd, pred_label))
+pred_knn = predict(fit_knn, newdata = test, type = "class")
+
+# LDA
+fit_lda = lda(fom2,data = train)
+pred_label <- predict(fit_lda, newdata = test, type = "class")
+mean(test$chd != pred_label$class)
+auc(roc(test$chd, as.numeric(pred_label$class)))
+pred_lda = pred_label
+
+# QDA
+fit_qda = qda(fom1, data = train)
+pred_label <- predict(fit_qda, newdata = test, type = "res")$class
+mean(test$chd != pred_label)
+pred_label = as.numeric(pred_label)-1
+auc(roc(test$chd, pred_label))
+pred_qda = pred_label
+
+# Tree
+train$chd = as.factor(train$chd)
+fit_tree = tree(fom1,data = train)
+fit_tree2 = prune.tree(fit_tree, best = 5)
+test$chd =as.factor(test$chd)
+pred_label <- predict(fit_tree2, newdata = test, type = "class")
+mean(test$chd != pred_label)
+pred_label = as.numeric(pred_label)-1
+auc(roc(test$chd, pred_label))
+pred_tree = pred_label
+
+# Random Forest
+rf <- randomForest(fom1,data = train, importance = TRUE)
+pred_prob<- predict(rf, newdata = test, type = 'response')
+mean(test$chd != pred_prob)
+roc(test$chd,as.numeric(pred_prob))
+pred_rf = pred_prob
+
+# Boosting
+train$chd=as.numeric(train$chd)-1
+test$chd=as.numeric(test$chd)-1
+boost.vasc <- gbm(fom4,data = train, distribution = "bernoulli", n.trees = 5000, interaction.depth = 1, cv.folds = 5, shrinkage = 0.2)
+best_n_tress <- which.min(boost.vasc$cv.error)
+yprob.boost <- predict(boost.vasc, newdata = test, n.trees = best_n_tress, type = "response")
+roc(test$chd,as.numeric(round(yprob.boost)))
+pred_boo = round(yprob.boost)
+```
+
+# sensitivity Analysis + specificity
+
+```{r message = FALSE}
+#sensitivity = TP/(FN+TP)
+#specificity = TN/(TN+FN)
+#F1-score = 2*TP/(2*TP+FP+FN)
+result = data.frame(test$chd,pred_logic,ifelse(pred_knn=="YES",1,0),ifelse(pred_lda$class=="YES",1,0),pred_qda,pred_tree,ifelse(pred_rf =="YES",1,0),pred_boo)
+
+colnames(result)[3] = "pred_knn"
+
+logictp = result %>% filter(test.chd == 1 & pred_logic ==1 ) %>% count()
+logicfn = result %>% filter(test.chd == 1 & pred_logic ==0 ) %>% count()
+logictn = result %>% filter(test.chd == 0 & pred_logic ==0 ) %>% count()
+logicfp = result %>% filter(test.chd == 0 & pred_logic ==1 ) %>% count()
+
+logics = logictp/(logicfn+logictp) #sensitivity
+logics2 = logictn/(logicfp+logictn) #specificity
+logics3 = 2*logictp/(2*logictp + logicfp + logicfn) # F1-score
+
+knntp = result %>% filter(test.chd == 1 & pred_knn ==1 ) %>% count()
+knnfn = result %>% filter(test.chd == 1 & pred_knn ==0 ) %>% count()
+knntn = result %>% filter(test.chd == 0 & pred_knn ==0 ) %>% count()
+knnfp = result %>% filter(test.chd == 0 & pred_knn ==1 ) %>% count()
+
+knns = knntp/(knnfn+knntp) #sensitivity
+knns2 = knntn/(knntn + knnfp) #specificity
+knns3 = 2*knntp/(2*knntp + knnfp + knnfn)# F1-score
+
+ldatp = result %>% filter(test.chd == 1 & ifelse.pred_lda.class.....YES...1..0. ==1 ) %>% count()
+ldafn = result %>% filter(test.chd == 1 & ifelse.pred_lda.class.....YES...1..0. ==0 ) %>% count()
+ldatn = result %>% filter(test.chd == 0 & ifelse.pred_lda.class.....YES...1..0. ==0 ) %>% count()
+ldafp = result %>% filter(test.chd == 0 & ifelse.pred_lda.class.....YES...1..0. ==1 ) %>% count()
+
+ldas=ldatp/(ldafn+ldatp)#sensitivity
+ldas2 = ldatn/(ldatn + ldafp)#specificity
+ldas3 = 2*ldatp/(2*ldatp + ldafp + ldafn)# F1-score
+
+qdatp = result %>% filter(test.chd == 1 & pred_qda ==1 ) %>% count()
+qdafn = result %>% filter(test.chd == 1 & pred_qda ==0 ) %>% count()
+qdatn = result %>% filter(test.chd == 0 & pred_qda ==0 ) %>% count()
+qdafp = result %>% filter(test.chd == 0 & pred_qda ==1 ) %>% count()
+
+qdas=qdatp/(qdafn+qdatp)#sensitivity
+qdas2 = qdatn/(qdatn+qdafp)#specificity
+qdas3 = 2*qdatp/(2*qdatp + qdafp + qdafn)# F1-score
+
+treetp = result %>% filter(test.chd == 1 & pred_tree ==1 ) %>% count()
+treefn = result %>% filter(test.chd == 1 & pred_tree ==0 ) %>% count()
+treetn = result %>% filter(test.chd == 0 & pred_tree ==0 ) %>% count()
+treefp = result %>% filter(test.chd == 0 & pred_tree ==1 ) %>% count()
+
+trees=treetp/(treefn+treetp)#sensitivity
+trees2 = treetn/(treetn + treefp)#specificity
+trees3 = 2*treetp/(2*treetp + treefp +treefn)# F1-score
+  
+rftp = result %>% filter(test.chd == 1 & ifelse.pred_rf.....YES...1..0. ==1 ) %>% count()
+rffn = result %>% filter(test.chd == 1 & ifelse.pred_rf.....YES...1..0. ==0 ) %>% count()
+rftn = result %>% filter(test.chd == 0 & ifelse.pred_rf.....YES...1..0. ==0 ) %>% count()
+rffp = result %>% filter(test.chd == 0 & ifelse.pred_rf.....YES...1..0. ==1 ) %>% count()
+
+rfs=rftp/(rffn+rftp)#sensitivity
+rfs2=rftn/(rftn+rffp)#specificity
+rfs3 = 2*rftp/(2*rftp + rffp +rffn)# F1-score
+
+bootp = result %>% filter(test.chd == 1 & pred_boo ==1 ) %>% count()
+boofn = result %>% filter(test.chd == 1 & pred_boo ==0 ) %>% count()
+bootn = result %>% filter(test.chd == 0 & pred_boo ==0 ) %>% count()
+boofp = result %>% filter(test.chd == 0 & pred_boo ==1 ) %>% count()
+
+boots=bootp/(boofn+bootp)#sensitivity
+boots2=bootn/(bootn+boofp)#specificity
+boots3= 2*bootp/(2*bootp + boofp +boofn)# F1-score
+
+# visualizatoin
+sensitivity = rbind(logics,knns,ldas,qdas,trees,rfs,boots)
+colnames(sensitivity) = 'sensitivity'
+sensitivity # see the detailed value of sensitivity of each model
+specificity = rbind(logics2,knns2,ldas2,qdas2,trees2,rfs2,boots2)
+colnames(specificity) = 'specificity'
+f1_score = rbind(logics3,knns3,ldas3,qdas3,trees3,rfs3,boots3)
+colnames(f1_score) = 'f1_score'
+name = c("LOGISTIC REGRESSION", "KNN", "LDA", "QDA", "TREE", "RANDOMFOREST","BOOSTING")
+evaluation <- data.frame(name,sensitivity,specificity, f1_score)
+evaluation_2<- pivot_longer(evaluation, cols = c('sensitivity', 'specificity', 'f1_score'), names_to = 'index', values_to = 'values')
+library(ggplot2)
+ggplot(data=evaluation_2, mapping=aes(x = name, y = values,fill = index)) +
+  geom_bar(stat="identity",position=position_dodge(0.75))+
+  scale_y_continuous(expand = c(0,0)) +
+  xlab('model')+ ylab('values')+
+  ggtitle('comparison of sensitivity and specificity')
+```
+
+
+
+
+
+
